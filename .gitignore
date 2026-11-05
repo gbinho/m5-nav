@@ -1,0 +1,6 @@
+.env*
+.vercel/
+.impeccable/
+.pio/
+.vscode/
+.claude/

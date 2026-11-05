@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BikeNav</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --bg:#0d0f12; --card:#171a1f; --line:#272b33; --text:#eef0f3; --mute:#8b93a1; --acc:#ffd23f; --ok:#3ddc84; --bad:#ff5d5d; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.4 -apple-system, system-ui, sans-serif; padding:16px; padding-bottom:40px; }
+  h1 { font-size:22px; margin:4px 0 16px; display:flex; justify-content:space-between; align-items:center; }
+  .pill { font-size:13px; font-weight:500; padding:4px 10px; border-radius:99px; background:var(--card); color:var(--mute); border:1px solid var(--line); }
+  .pill.ok { color:var(--ok); border-color:#1f5a3a; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  button, label.btn { display:block; width:100%; padding:14px; font:600 16px inherit; font-family:inherit; border-radius:12px; border:0; background:var(--acc); color:#111; text-align:center; cursor:pointer; }
+  button.sec, label.btn { background:#262a32; color:var(--text); }
+  button:disabled { opacity:.4; }
+  .row { display:flex; gap:8px; margin-top:8px; }
+  .row > * { flex:1; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .k { color:var(--mute); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .v { font-size:24px; font-weight:650; font-variant-numeric:tabular-nums; }
+  .big { font-size:52px; line-height:1; }
+  .dark-tiles { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); }
+  #map { height:300px; border-radius:10px; background:#0a0c0f; margin-top:10px; }
+  input[type=search] { flex:1; min-width:0; padding:13px; font:16px inherit; font-family:inherit; border-radius:12px; border:1px solid var(--line); background:#0a0c0f; color:var(--text); }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chips span { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:99px; background:#0a0c0f; }
+  .chips button { width:auto; padding:8px 12px; font-size:14px; background:none; color:var(--text); }
+  .chips button.x { padding:8px 10px 8px 2px; color:var(--mute); }
+  select { flex:0 0 140px; padding:13px; font:16px inherit; font-family:inherit; border-radius:12px; border:1px solid var(--line); background:#0a0c0f; color:var(--text); }
+  .favpin { font-size:20px; text-shadow:0 0 3px #000, 0 0 3px #000; }
+  #results button { background:#0a0c0f; color:var(--text); text-align:left; font-weight:500; font-size:14px; margin-top:6px; padding:10px 12px; border:1px solid var(--line); }
+  .small { font-size:13px; color:var(--mute); margin-top:8px; }
+  input[type=file] { display:none; }
+  .err { color:var(--bad); }
+  .bar { height:8px; border-radius:99px; background:#0a0c0f; margin-top:10px; overflow:hidden; }
+  .bar > div { height:100%; width:0; background:var(--acc); transition:width .2s; }
+  .bar.busy > div { width:30% !important; animation:slide 1.2s linear infinite; }
+  @keyframes slide { from { transform:translateX(-100%); } to { transform:translateX(340%); } }
+  .log { font:12px/1.5 ui-monospace, Menlo, monospace; color:var(--mute); margin-top:10px; max-height:140px; overflow:auto; white-space:pre-wrap; }
+  .log .e { color:var(--bad); }
+  .log .o { color:var(--ok); }
+</style>
+</head>
+<body>
+<h1>BikeNav <span id="bleState" class="pill">desconectado</span></h1>
+
+<div class="card">
+  <button id="connectBtn">Conectar ao M5Stick</button>
+  <div class="small" id="bleInfo">Abra esta página no app <b>Bluefy</b>. O Stick aparece como "BikeNav".</div>
+</div>
+
+<div class="card">
+  <div class="k">velocidade</div>
+  <div class="v big" id="speed">–</div>
+  <div class="grid" style="margin-top:12px">
+    <div><div class="k">distância</div><div class="v" id="dist">0 m</div></div>
+    <div><div class="k">tempo</div><div class="v" id="time">0:00:00</div></div>
+    <div><div class="k">média</div><div class="v" id="avg">–</div></div>
+    <div><div class="k">precisão GPS</div><div class="v" id="acc">–</div></div>
+  </div>
+  <div class="row">
+    <button id="gpsBtn">Iniciar GPS</button>
+    <button id="resetBtn" class="sec">Zerar</button>
+  </div>
+  <div class="small" id="gpsInfo">Deixe a tela do celular ligada durante o pedal.</div>
+  <div class="small" id="limitInfo"></div>
+</div>
+
+<div class="card">
+  <div class="k">mapa de ruas no Stick</div>
+  <div class="v" id="mapStage" style="font-size:18px">aguardando GPS e conexão</div>
+  <div class="bar"><div id="mapBar"></div></div>
+  <div class="small" id="mapInfo">As ruas em volta (1,2 km) vêm do OpenStreetMap (via OpenFreeMap) e são atualizadas conforme você anda.</div>
+  <div class="row">
+    <button id="mapNowBtn">Baixar agora</button>
+    <button id="mapBtn" class="sec">Ruas: ligado</button>
+  </div>
+  <div class="log" id="mapLog"></div>
+</div>
+
+<div class="card">
+  <div class="k">destino</div>
+  <form id="searchForm" class="row" style="margin-top:6px">
+    <input id="searchInput" type="search" placeholder="Para onde? (endereço, lugar)" autocomplete="off">
+    <button id="searchBtn" style="flex:0 0 90px">Buscar</button>
+  </form>
+  <div id="results"></div>
+  <div id="favs" class="chips"></div>
+  <div id="map"></div>
+  <div class="small">Ou toque no mapa para marcar o destino.</div>
+  <div class="v" id="routeName" style="font-size:18px;margin-top:8px">nenhuma rota</div>
+  <div class="v" id="turnInfo" style="font-size:16px;color:var(--acc)"></div>
+  <div class="row">
+    <select id="favIcon"><option value="0">★ Favorito</option><option value="1">🏠 Casa</option><option value="2">💼 Trabalho</option></select>
+    <button id="favSave" class="sec">Salvar destino</button>
+  </div>
+  <div class="row">
+    <label class="btn" for="gpxFile">Abrir GPX</label>
+    <button id="clearBtn" class="sec">Remover</button>
+  </div>
+  <input type="file" id="gpxFile" accept=".gpx,application/gpx+xml,application/xml,text/xml,*/*">
+  <div class="small" id="routeInfo">Exporte a rota em GPX no Strava, Komoot, RideWithGPS etc.</div>
+</div>
+
+<script>
+const SERVICE = "6b1e0001-5a1c-4b7e-9d3a-b1ce0a7e0001";
+const CHAR = "6b1e0002-5a1c-4b7e-9d3a-b1ce0a7e0001";
+const MAX_POINTS = 2000, CHUNK = 16;
+const $ = id => document.getElementById(id);
+
+let device = null, chr = null, route = null, watchId = null;
+let ride = { dist: 0, moving: 0, last: null, speed: 0, heading: -1, acc: 0, lat: null, lon: null };
+
+// ---------- fila BLE: uma operacao GATT por vez ----------
+let queue = Promise.resolve();
+function send(buf) {
+  if (!chr) return Promise.resolve();
+  queue = queue.then(() => chr ? chr.writeValueWithResponse(buf) : null).catch(e => console.warn(e));
+  return queue;
+}
+
+async function connect() {
+  try {
+    if (!navigator.bluetooth) throw new Error("Este navegador não tem Bluetooth. Use o Bluefy.");
+    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
+    device.addEventListener("gattserverdisconnected", onDisconnect);
+    await openGatt();
+  } catch (e) {
+    $("bleInfo").innerHTML = `<span class="err">${e.message}</span>`;
+  }
+}
+async function openGatt() {
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(SERVICE);
+  chr = await svc.getCharacteristic(CHAR);
+  setBle(true);
+  if (route) sendRoute();
+  if (mapPackets) sendMap();
+  sendFavs();
+  send(new Uint8Array([83, speedLimit]).buffer); // 'S'
+}
+function onDisconnect() {
+  chr = null;
+  setBle(false);
+  setTimeout(() => device && openGatt().catch(onDisconnect), 2000);  // tenta de novo sozinho
+}
+function setBle(ok) {
+  $("bleState").textContent = ok ? "conectado" : "desconectado";
+  $("bleState").classList.toggle("ok", ok);
+  $("connectBtn").textContent = ok ? "Conectado a " + (device.name || "BikeNav") : "Conectar ao M5Stick";
+  $("bleInfo").textContent = ok ? "Mandando dados a cada segundo." : "Reconectando quando o Stick voltar ao alcance...";
+}
+
+// ---------- mensagens ----------
+function msgPos() {
+  const b = new DataView(new ArrayBuffer(23));
+  b.setUint8(0, 80); // 'P'
+  b.setInt32(1, Math.round(ride.lat * 1e7), true);
+  b.setInt32(5, Math.round(ride.lon * 1e7), true);
+  b.setUint16(9, Math.min(65535, Math.round(ride.speed * 10)), true);
+  b.setInt16(11, ride.heading >= 0 ? Math.round(ride.heading * 10) : -1, true);
+  b.setUint16(13, Math.min(65535, Math.round(ride.acc)), true);
+  b.setUint32(15, Math.round(ride.dist), true);
+  b.setUint32(19, Math.round(ride.moving), true);
+  return b.buffer;
+}
+async function sendRoute() {
+  const pts = route.points, n = pts.length;
+  const h = new DataView(new ArrayBuffer(3));
+  h.setUint8(0, 82); h.setUint16(1, n, true); // 'R'
+  send(h.buffer);
+  for (let s = 0; s < n; s += CHUNK) {
+    const cnt = Math.min(CHUNK, n - s), b = new DataView(new ArrayBuffer(3 + cnt * 8));
+    b.setUint8(0, 67); b.setUint16(1, s, true); // 'C'
+    for (let i = 0; i < cnt; i++) {
+      b.setInt32(3 + i * 8, Math.round(pts[s + i][0] * 1e7), true);
+      b.setInt32(7 + i * 8, Math.round(pts[s + i][1] * 1e7), true);
+    }
+    send(b.buffer);
+  }
+  await send(new Uint8Array([69]).buffer); // 'E'
+  $("routeInfo").textContent = chr ? `Rota enviada ao Stick (${n} pontos).` : "Rota carregada; será enviada ao conectar.";
+}
+
+// ---------- GPS ----------
+function haversine(a, b, c, d) {
+  const R = 6371000, r = Math.PI / 180;
+  const x = Math.sin((c - a) * r / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin((d - b) * r / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+function onPos(p) {
+  const c = p.coords, t = p.timestamp;
+  ride.lat = c.latitude; ride.lon = c.longitude; ride.acc = c.accuracy || 0;
+  let spd = c.speed != null && c.speed >= 0 ? c.speed * 3.6 : null;
+  if (ride.last) {
+    const d = haversine(ride.last.lat, ride.last.lon, c.latitude, c.longitude);
+    const dt = (t - ride.last.t) / 1000;
+    if (spd == null && dt > 0) spd = d / dt * 3.6;
+    // so conta quando andou mais que o erro do GPS
+    if (d > Math.max(3, Math.min(ride.acc, 25))) {
+      if (spd > 2 && dt < 30) { ride.dist += d; ride.moving += dt; }
+      ride.last = { lat: c.latitude, lon: c.longitude, t };
+    }
+  } else ride.last = { lat: c.latitude, lon: c.longitude, t };
+  ride.speed = spd != null && spd > 1.5 ? spd : 0;
+  ride.heading = c.heading != null && c.heading >= 0 && ride.speed > 3 ? c.heading : -1;
+  sendPos();
+  render();
+  checkOffRoute();
+  updateNav();
+  maybeSpeedLimit();
+  if (dest && !route?.dest && Date.now() - lastRouteAt > 10000) calcRoute(true);  // destino marcado antes do GPS
+}
+function startGps() {
+  if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; $("gpsBtn").textContent = "Iniciar GPS"; return; }
+  if (!navigator.geolocation) { $("gpsInfo").innerHTML = '<span class="err">GPS indisponível.</span>'; return; }
+  watchId = navigator.geolocation.watchPosition(onPos, e => { $("gpsInfo").innerHTML = `<span class="err">GPS: ${e.message}</span>`; },
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  $("gpsBtn").textContent = "Parar GPS";
+  keepAwake();
+}
+// manda assim que o GPS atualiza; o intervalo so cobre quando o GPS fica quieto
+let lastPosSent = 0;
+function sendPos() { if (chr && ride.lat != null) { send(msgPos()); lastPosSent = Date.now(); } }
+setInterval(() => { if (Date.now() - lastPosSent > 900) sendPos(); }, 1000);
+
+let wakeLock = null;
+async function keepAwake() {
+  try { wakeLock = await navigator.wakeLock.request("screen"); } catch { /* nem todo navegador tem */ }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && watchId != null) keepAwake(); });
+
+// ---------- tela ----------
+function fmtDist(m) { return m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(m < 10000 ? 2 : 1) + " km"; }
+function fmtTime(s) { s = Math.round(s); return `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; }
+function render() {
+  $("speed").innerHTML = ride.lat == null ? "–" : `${ride.speed.toFixed(1)} <span style="font-size:18px;color:var(--mute)">km/h</span>`;
+  $("dist").textContent = fmtDist(ride.dist);
+  $("time").textContent = fmtTime(ride.moving);
+  $("avg").textContent = ride.moving > 10 ? (ride.dist / ride.moving * 3.6).toFixed(1) + " km/h" : "–";
+  $("acc").textContent = ride.lat == null ? "–" : "±" + Math.round(ride.acc) + " m";
+  drawPreview();
+}
+setInterval(() => $("time").textContent = fmtTime(ride.moving), 1000);
+
+// ---------- mapa do celular (Leaflet) ----------
+const lmap = L.map("map", { zoomControl: false, attributionControl: true }).setView([-15.8, -47.9], 4);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { className: "dark-tiles",
+  maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(lmap);
+let routeLine = null, meDot = null, destPin = null, centered = false;
+lmap.on("click", e => setDestination(e.latlng.lat, e.latlng.lng, "ponto no mapa"));
+
+function drawPreview() {
+  if (ride.lat != null) {
+    if (!meDot) meDot = L.circleMarker([ride.lat, ride.lon], { radius: 8, color: "#fff", weight: 3, fillColor: "#4fc3ff", fillOpacity: 1 }).addTo(lmap);
+    else meDot.setLatLng([ride.lat, ride.lon]);
+    if (!centered) { lmap.setView([ride.lat, ride.lon], 15); centered = true; }
+  }
+  if (routeLine) { routeLine.remove(); routeLine = null; }
+  if (route) routeLine = L.polyline(route.points, { color: "#ffd23f", weight: 5 }).addTo(lmap);
+}
+
+// ---------- destino: busca (Nominatim) e rota (OSRM) ----------
+let dest = null, routing = false, offCount = 0, lastRouteAt = 0;
+
+async function search(q) {
+  $("results").innerHTML = '<div class="small">buscando...</div>';
+  let url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&accept-language=pt-BR&q=${encodeURIComponent(q)}`;
+  if (ride.lat != null) url += `&viewbox=${ride.lon - 0.6},${ride.lat + 0.6},${ride.lon + 0.6},${ride.lat - 0.6}`;
+  try {
+    const list = await (await fetchTimed(url, 15000)).json();
+    if (!list.length) { $("results").innerHTML = '<div class="small err">nada encontrado</div>'; return; }
+    $("results").innerHTML = "";
+    for (const r of list) {
+      const b = document.createElement("button");
+      const dist = ride.lat != null ? " · " + fmtDist(haversine(ride.lat, ride.lon, +r.lat, +r.lon)) : "";
+      b.textContent = r.display_name.split(",").slice(0, 3).join(",") + dist;
+      b.onclick = () => { $("results").innerHTML = ""; setDestination(+r.lat, +r.lon, r.name || r.display_name.split(",")[0]); };
+      $("results").append(b);
+    }
+  } catch (e) { $("results").innerHTML = `<div class="small err">busca falhou: ${e.message}</div>`; }
+}
+
+function setDestination(lat, lon, name) {
+  dest = { lat, lon, name };
+  if (destPin) destPin.remove();
+  destPin = L.marker([lat, lon]).addTo(lmap).bindPopup(name);
+  calcRoute(true);
+}
+
+// ---------- manobras: proxima curva, distancia e hora de chegada ----------
+let nav = null, navGen = 0;
+function turnKind(m) {
+  if (m.type === "arrive") return 9;
+  if (/roundabout|rotary/.test(m.type)) return 10;
+  return { straight: 1, "slight right": 2, right: 3, "sharp right": 4, uturn: 5, "slight left": 6, left: 7, "sharp left": 8 }[m.modifier || "straight"] || 1;
+}
+function buildNav(rt, full) {
+  const cum = [0];
+  for (let i = 1; i < full.length; i++) cum.push(cum[i - 1] + haversine(full[i - 1][0], full[i - 1][1], full[i][0], full[i][1]));
+  const mans = [];
+  let from = 0;
+  for (const st of rt.legs[0].steps) {
+    const m = st.maneuver;
+    if (m.type === "depart" || ((m.type === "new name" || m.type === "continue") && (m.modifier || "straight") === "straight")) continue;
+    const [lo, la] = m.location;
+    let bi = from, bd = Infinity;
+    for (let i = from; i < full.length; i++) { const d = haversine(la, lo, full[i][0], full[i][1]); if (d < bd) { bd = d; bi = i; } if (bd < 2) break; }
+    from = bi;
+    mans.push({ idx: bi, kind: turnKind(m), name: st.name || (m.type === "arrive" ? "destino" : "") });
+  }
+  nav = { full, cum, mans, speed: rt.distance / Math.max(rt.duration, 1), idx: 0, gen: ++navGen };
+}
+const TURN_TXT = ["", "siga", "leve à direita", "direita", "direita fechada", "retorno", "leve à esquerda", "esquerda", "esquerda fechada", "chegada", "rotatória"];
+function updateNav() {
+  if (!nav || ride.lat == null) return;
+  const { full, cum } = nav;
+  const near = (a, b) => { let bi = nav.idx, bd = Infinity; for (let i = Math.max(a, 0); i < Math.min(b, full.length); i++) { const d = haversine(ride.lat, ride.lon, full[i][0], full[i][1]); if (d < bd) { bd = d; bi = i; } } return [bi, bd]; };
+  let [bi, bd] = near(nav.idx - 5, nav.idx + 80);
+  if (bd > 80) [bi, bd] = near(0, full.length);
+  nav.idx = bi;
+  const mi = nav.mans.findIndex(m => m.idx > bi);
+  if (mi < 0) return;
+  const m = nav.mans[mi], dist = Math.max(0, cum[m.idx] - cum[bi]);
+  const left = cum.at(-1) - cum[bi], eta = new Date(Date.now() + left / nav.speed * 1000);
+  const etaMin = eta.getHours() * 60 + eta.getMinutes();
+  const id = (nav.gen * 37 + mi) % 254 + 1;
+  const b = new DataView(new ArrayBuffer(7));
+  b.setUint8(0, 84); b.setUint8(1, id); b.setUint8(2, m.kind); // 'T'
+  b.setUint16(3, Math.min(65535, Math.round(dist)), true); b.setUint16(5, etaMin, true);
+  if (chr) send(b.buffer);
+  $("turnInfo").textContent = `${TURN_TXT[m.kind]} em ${fmtDist(dist)}${m.name ? " · " + m.name : ""} · chega ${eta.toTimeString().slice(0, 5)}`;
+}
+function clearNav() {
+  nav = null; $("turnInfo").textContent = "";
+  send(new Uint8Array([84, 0, 0, 0, 0, 255, 255]).buffer); // 'T' vazio
+}
+
+// ---------- limite de velocidade da via (OpenStreetMap, consulta pequena) ----------
+let speedLimit = 0, limitAt = 0, limitBusy = false;
+async function maybeSpeedLimit() {
+  if (limitBusy || ride.lat == null || Date.now() - limitAt < 15000) return;
+  limitBusy = true; limitAt = Date.now();
+  try {
+    const q = `[out:json][timeout:8];way(around:25,${ride.lat.toFixed(6)},${ride.lon.toFixed(6)})[highway][maxspeed];out tags 3;`;
+    const r = await fetchTimed(OVERPASS[0] + "?data=" + encodeURIComponent(q), 10000);
+    const ways = (await r.json()).elements || [];
+    const v = ways.map(w => parseInt(w.tags.maxspeed)).find(n => n > 0 && n < 200) || 0;
+    if (v !== speedLimit) { speedLimit = v; send(new Uint8Array([83, v]).buffer); }
+    $("limitInfo").textContent = v ? `limite da via: ${v} km/h` : "limite da via: sem informação";
+  } catch { /* servidor ocupado: tenta de novo em 15 s */ }
+  finally { limitBusy = false; }
+}
+
+// ---------- favoritos ----------
+const FAV_ICON = ["★", "🏠", "💼"];
+let favs = [], favMarkers = [];
+try { favs = JSON.parse(localStorage.getItem("bikenav.favs")) || []; } catch {}
+function renderFavs() {
+  $("favs").innerHTML = "";
+  favMarkers.forEach(m => m.remove()); favMarkers = [];
+  favs.forEach((f, i) => {
+    const chip = document.createElement("span");
+    const go = document.createElement("button"), del = document.createElement("button");
+    go.textContent = `${FAV_ICON[f.icon]} ${f.name}`;
+    go.onclick = () => setDestination(f.lat, f.lon, f.name);
+    del.textContent = "×"; del.className = "x";
+    del.onclick = () => { favs.splice(i, 1); saveFavs(); };
+    chip.append(go, del); $("favs").append(chip);
+    favMarkers.push(L.marker([f.lat, f.lon], { icon: L.divIcon({ className: "favpin", html: FAV_ICON[f.icon], iconSize: [24, 24] }) })
+      .addTo(lmap).on("click", () => setDestination(f.lat, f.lon, f.name)));
+  });
+}
+function sendFavs() {
+  const list = favs.slice(0, 16), b = new DataView(new ArrayBuffer(2 + list.length * 9));
+  b.setUint8(0, 86); b.setUint8(1, list.length); // 'V'
+  list.forEach((f, i) => { b.setUint8(2 + i * 9, f.icon); b.setInt32(3 + i * 9, Math.round(f.lat * 1e7), true); b.setInt32(7 + i * 9, Math.round(f.lon * 1e7), true); });
+  send(b.buffer);
+}
+function saveFavs() { try { localStorage.setItem("bikenav.favs", JSON.stringify(favs)); } catch {} renderFavs(); sendFavs(); }
+
+// ---------- cache das ruas no celular: funciona sem sinal na rota ja vista ----------
+async function cachedFetch(url, ms) {
+  let cache = null;
+  try { cache = await caches.open("bikenav-tiles"); } catch {}
+  try {
+    const r = await fetchTimed(url, ms);
+    if (cache) cache.put(url, r.clone()).catch(() => {});
+    return r;
+  } catch (e) {
+    const hit = cache && await cache.match(url);
+    if (hit) return hit;
+    throw e;
+  }
+}
+const tileX = (lo, n) => Math.floor((lo + 180) / 360 * n);
+const tileY = (la, n) => Math.floor((1 - Math.log(Math.tan(la * Math.PI / 180) + 1 / Math.cos(la * Math.PI / 180)) / Math.PI) / 2 * n);
+async function prefetchTiles(pts) {  // baixa os blocos ao longo da rota, em segundo plano
+  try {
+    if (!tileUrl) return;
+    const n = 2 ** TILE_Z, set = new Set();
+    for (let i = 0; i < pts.length; i += 3) {
+      const x = tileX(pts[i][1], n), y = tileY(pts[i][0], n);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) set.add(`${x + dx}/${y + dy}`);
+    }
+    const list = [...set].slice(0, 120);
+    let ok = 0;
+    for (const t of list) {
+      const [x, y] = t.split("/");
+      try { await cachedFetch(tileUrl.replace("{z}", TILE_Z).replace("{x}", x).replace("{y}", y), 20000); ok++; } catch {}
+    }
+    mapLog(`rota guardada para usar sem sinal: ${ok}/${list.length} blocos`, "o");
+  } catch {}
+}
+
+async function calcRoute(fit) {
+  if (!dest) return;
+  if (ride.lat == null) { $("routeName").textContent = `destino: ${dest.name} (inicie o GPS para traçar)`; return; }
+  if (routing) return;
+  routing = true; lastRouteAt = Date.now();
+  $("routeName").textContent = "traçando rota...";
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${ride.lon},${ride.lat};${dest.lon},${dest.lat}?overview=full&geometries=geojson&steps=true`;
+    const j = await (await fetchTimed(url, 20000)).json();
+    if (j.code !== "Ok" || !j.routes?.length) throw new Error(j.message || j.code);
+    const rt = j.routes[0];
+    let pts = rt.geometry.coordinates.map(([lo, la]) => [la, lo]);
+    buildNav(rt, pts);
+    prefetchTiles(pts);
+    for (let tol = 2; pts.length > MAX_POINTS; tol *= 1.5) pts = simplify(pts, tol);
+    route = { name: dest.name, points: pts, dest: true };
+    $("routeName").textContent = `${dest.name} · ${fmtDist(rt.distance)} · ${Math.round(rt.duration / 60)} min`;
+    try { localStorage.setItem("bikenav.route", JSON.stringify(route)); } catch {}
+    drawPreview();
+    if (fit) lmap.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
+    if (chr) sendRoute();
+  } catch (e) {
+    $("routeName").textContent = `rota falhou: ${e.message}`;
+  } finally { routing = false; }
+}
+
+// saiu da rota por 3 leituras seguidas: recalcula (no maximo a cada 20 s)
+function checkOffRoute() {
+  if (!route?.dest || !dest || ride.lat == null) return;
+  let best = Infinity;
+  for (const [la, lo] of route.points) best = Math.min(best, haversine(ride.lat, ride.lon, la, lo));
+  offCount = best > 80 ? offCount + 1 : 0;
+  if (offCount >= 3 && Date.now() - lastRouteAt > 20000) { offCount = 0; calcRoute(false); }
+  if (haversine(ride.lat, ride.lon, dest.lat, dest.lon) < 30) $("routeName").textContent = `chegou: ${dest.name} ✓`;
+}
+
+// ---------- mapa de ruas (OpenStreetMap: OpenFreeMap, reserva Overpass) ----------
+const MAP_RADIUS = 1200, MAP_REFRESH = 600, MAP_MAX_PTS = 5900, WAY_CHUNK = 40, PACKET_BYTES = 480;
+const SERVER_TIMEOUT = 25000, RETRY_DELAY = 20000;
+const OVERPASS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+];
+const ROAD_CLASS = {
+  motorway: 0, trunk: 0, motorway_link: 0, trunk_link: 0,
+  primary: 1, secondary: 1, primary_link: 1, secondary_link: 1,
+  tertiary: 2, tertiary_link: 2, unclassified: 2, residential: 2, living_street: 2,
+};
+let mapOn = true, mapBusy = false, mapCenter = null, mapPackets = null, mapNextTry = 0;
+
+function mapLog(text, cls = "") {
+  const el = $("mapLog"), t = new Date().toTimeString().slice(0, 8);
+  el.insertAdjacentHTML("afterbegin", `<div class="${cls}">${t} ${text}</div>`);
+  while (el.children.length > 30) el.lastChild.remove();
+}
+function mapProgress(stage, frac) {  // frac: 0..1, ou null para "trabalhando"
+  $("mapStage").textContent = stage;
+  $("mapBar").parentElement.classList.toggle("busy", frac == null);
+  $("mapBar").style.width = frac == null ? "" : Math.round(frac * 100) + "%";
+}
+const kb = n => (n / 1024).toFixed(0) + " KB";
+const host = u => new URL(u).host;
+
+function simplifyXY(P, tol) {  // Douglas-Peucker em pontos [x, y] em metros
+  if (P.length < 3) return P;
+  const keep = new Uint8Array(P.length); keep[0] = keep[P.length - 1] = 1;
+  const stack = [[0, P.length - 1]];
+  while (stack.length) {
+    const [i, j] = stack.pop(); let best = -1, bi = -1;
+    const [ax, ay] = P[i], [bx, by] = P[j], dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
+    for (let m = i + 1; m < j; m++) { const dd = Math.abs(dy * (P[m][0] - ax) - dx * (P[m][1] - ay)) / L; if (dd > best) { best = dd; bi = m; } }
+    if (best > tol) { keep[bi] = 1; stack.push([i, bi], [bi, j]); }
+  }
+  return P.filter((_, i) => keep[i]);
+}
+
+// fonte principal: blocos de mapa vetorial do OpenFreeMap (CDN, rapido); reserva: Overpass
+const TILE_Z = 14;
+const TILE_CLASS = { motorway: 0, trunk: 0, primary: 1, secondary: 1, tertiary: 2, minor: 2 };
+let vtLib = null, tileUrl = null;
+async function loadVt() {
+  if (!vtLib) {
+    const [vt, pbf] = await Promise.all([
+      import("https://cdn.jsdelivr.net/npm/@mapbox/vector-tile@2.0.3/+esm"),
+      import("https://cdn.jsdelivr.net/npm/pbf@4.0.1/+esm"),
+    ]);
+    vtLib = { VectorTile: vt.VectorTile, Pbf: pbf.default };
+  }
+  return vtLib;
+}
+async function fetchTimed(url, ms) {
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctl.signal });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r;
+  } catch (e) { throw e.name === "AbortError" ? new Error(`sem resposta em ${ms / 1000} s`) : e; }
+  finally { clearTimeout(timer); }
+}
+async function fetchRoadsTiles(lat, lon) {
+  const t0 = performance.now();
+  mapProgress("carregando leitor de mapa", null);
+  const { VectorTile, Pbf } = await loadVt();
+  if (!tileUrl) {
+    try {
+      tileUrl = (await (await fetchTimed("https://tiles.openfreemap.org/planet", 15000)).json()).tiles[0];
+      try { localStorage.setItem("bikenav.tileUrl", tileUrl); } catch {}
+    } catch (e) {
+      try { tileUrl = localStorage.getItem("bikenav.tileUrl"); } catch {}
+      if (!tileUrl) throw e;
+    }
+  }
+  const n = 2 ** TILE_Z, kx = 111320 * Math.cos(lat * Math.PI / 180), ky = 110540;
+  const tx = lo => (lo + 180) / 360 * n;
+  const ty = la => (1 - Math.log(Math.tan(la * Math.PI / 180) + 1 / Math.cos(la * Math.PI / 180)) / Math.PI) / 2 * n;
+  const dLat = MAP_RADIUS / ky, dLon = MAP_RADIUS / kx;
+  const x0 = Math.floor(tx(lon - dLon)), x1 = Math.floor(tx(lon + dLon));
+  const y0 = Math.floor(ty(lat + dLat)), y1 = Math.floor(ty(lat - dLat));
+  const tiles = [];
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) tiles.push([x, y]);
+  mapLog(`OpenFreeMap: ${tiles.length} blocos z${TILE_Z}`);
+  const ways = [];
+  let bytes = 0, done = 0;
+  mapProgress(`baixando blocos 0/${tiles.length}`, 0);
+  await Promise.all(tiles.map(async ([x, y]) => {
+    const buf = await (await cachedFetch(tileUrl.replace("{z}", TILE_Z).replace("{x}", x).replace("{y}", y), SERVER_TIMEOUT)).arrayBuffer();
+    bytes += buf.byteLength;
+    const layer = new VectorTile(new Pbf(buf)).layers.transportation;
+    for (let i = 0; layer && i < layer.length; i++) {
+      const f = layer.feature(i), c = TILE_CLASS[f.properties.class];
+      if (c == null || f.type !== 2) continue;
+      for (const line of f.loadGeometry()) {
+        ways.push({ c, P: line.map(p => {
+          const lo = (x + p.x / f.extent) / n * 360 - 180;
+          const la = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + p.y / f.extent) / n))) * 180 / Math.PI;
+          return [(lo - lon) * kx, (la - lat) * ky];
+        }) });
+      }
+    }
+    done++;
+    mapProgress(`baixando blocos ${done}/${tiles.length} · ${kb(bytes)}`, done / tiles.length);
+  }));
+  mapLog(`OpenFreeMap: ${kb(bytes)} em ${((performance.now() - t0) / 1000).toFixed(1)} s, ${ways.length} linhas`, "o");
+  return ways;
+}
+
+async function fetchRoads(lat, lon) {
+  try { return await fetchRoadsTiles(lat, lon); }
+  catch (e) { mapLog(`OpenFreeMap: ${e.message}; tentando Overpass`, "e"); }
+  return overpassWays(await fetchRoadsOverpass(lat, lon), lat, lon);
+}
+
+function overpassWays(elements, lat, lon) {
+  const kx = 111320 * Math.cos(lat * Math.PI / 180), ky = 110540, ways = [];
+  for (const el of elements) {
+    const c = ROAD_CLASS[el.tags?.highway];
+    if (c == null || !el.geometry) continue;
+    ways.push({ c, P: el.geometry.map(g => [(g.lon - lon) * kx, (g.lat - lat) * ky]) });
+  }
+  return ways;
+}
+
+async function fetchRoadsOverpass(lat, lon) {
+  const dLat = MAP_RADIUS / 110540, dLon = MAP_RADIUS / (111320 * Math.cos(lat * Math.PI / 180));
+  const bbox = [lat - dLat, lon - dLon, lat + dLat, lon + dLon].map(v => v.toFixed(6)).join(",");
+  // sem vias de servico (estacionamentos etc): a resposta cai bastante
+  const q = `[out:json][timeout:20];way["highway"~"^(${Object.keys(ROAD_CLASS).join("|")})$"](${bbox});out geom qt;`;
+  let lastErr;
+  for (const [i, url] of OVERPASS.entries()) {
+    const ctl = new AbortController(), t0 = performance.now();
+    const timer = setTimeout(() => ctl.abort(), SERVER_TIMEOUT);
+    try {
+      mapProgress(`conectando ao servidor ${i + 1}/${OVERPASS.length}`, null);
+      mapLog(`pedindo ruas a ${host(url)}...`);
+      const r = await fetch(url, { method: "POST", body: "data=" + encodeURIComponent(q), signal: ctl.signal,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+      if (!r.ok) throw new Error(r.status === 429 ? "servidor ocupado (429)" : r.status === 504 ? "servidor demorou (504)" : "HTTP " + r.status);
+      const total = +r.headers.get("content-length") || 0;
+      const parts = [];
+      let got = 0;
+      if (!r.body?.getReader) { const b = await r.arrayBuffer(); parts.push(new Uint8Array(b)); got = b.byteLength; }
+      const reader = r.body?.getReader ? r.body.getReader() : { read: async () => ({ done: true }) };
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value); got += value.length;
+        const secs = (performance.now() - t0) / 1000;
+        mapProgress(`baixando ${kb(got)}${total ? " de " + kb(total) : ""} · ${(got / 1024 / secs).toFixed(0)} KB/s`, total ? got / total : null);
+      }
+      const json = JSON.parse(new TextDecoder().decode(await new Blob(parts).arrayBuffer()));
+      if (json.remark && !json.elements?.length) throw new Error(json.remark.slice(0, 80));
+      mapLog(`${host(url)}: ${kb(got)} em ${((performance.now() - t0) / 1000).toFixed(1)} s, ${json.elements.length} ruas`, "o");
+      return json.elements || [];
+    } catch (e) {
+      const msg = e.name === "AbortError" ? `sem resposta em ${SERVER_TIMEOUT / 1000} s` : e.message;
+      mapLog(`${host(url)}: ${msg}`, "e");
+      lastErr = new Error(msg);
+    } finally { clearTimeout(timer); }
+  }
+  throw lastErr;
+}
+
+function buildMap(lat, lon, raw) {
+  // corta o que passa muito do raio e simplifica
+  const lim = MAP_RADIUS * 1.3, inside = ([x, y]) => Math.abs(x) <= lim && Math.abs(y) <= lim;
+  const ways = [];
+  for (const { c, P: full } of raw) {
+    let run = [];
+    const push = () => { if (run.length >= 2) { const P = simplifyXY(run, 2.5); if (P.length >= 2) ways.push({ c, P }); } run = []; };
+    for (const p of full) { if (inside(p)) run.push(p); else push(); }
+    push();
+  }
+  ways.sort((a, b) => a.c - b.c);  // ruas grandes primeiro, se faltar espaco cortam as pequenas
+  const packets = [], head = new DataView(new ArrayBuffer(9));
+  head.setUint8(0, 77); head.setInt32(1, Math.round(lat * 1e7), true); head.setInt32(5, Math.round(lon * 1e7), true); // 'M'
+  packets.push(head.buffer);
+  // varias ruas por mensagem: cada escrita BLE custa caro
+  let pts = 0, nWays = 0, buf = [87]; // 'W'
+  const flush = () => { if (buf.length > 1) packets.push(new Uint8Array(buf).buffer); buf = [87]; };
+  outer: for (const { c, P } of ways) {
+    for (let s = 0; s < P.length - 1; s += WAY_CHUNK - 1) {
+      const part = P.slice(s, s + WAY_CHUNK);
+      if (pts + part.length > MAP_MAX_PTS || nWays >= 1990) break outer;
+      if (buf.length + 2 + part.length * 4 > PACKET_BYTES) flush();
+      buf.push(c, part.length);
+      for (const [x, y] of part) {
+        const xi = Math.round(x) & 0xffff, yi = Math.round(y) & 0xffff;
+        buf.push(xi & 255, xi >> 8, yi & 255, yi >> 8);
+      }
+      pts += part.length; nWays++;
+    }
+  }
+  flush();
+  packets.push(new Uint8Array([70]).buffer); // 'F'
+  return { packets, pts, nWays };
+}
+
+async function sendMap() {
+  const list = mapPackets, n = list.length, t0 = performance.now();
+  let done = 0;
+  mapProgress(`enviando ao Stick 0/${n}`, 0);
+  for (const p of list) send(p).then(() => {
+    done++;
+    if (list === mapPackets) mapProgress(`enviando ao Stick ${done}/${n}`, done / n);
+  });
+  await queue;
+  if (list !== mapPackets) return;
+  if (!chr) { mapLog("conexão caiu no meio do envio; reenvio ao reconectar", "e"); return; }
+  mapLog(`Stick recebeu ${n} pacotes em ${((performance.now() - t0) / 1000).toFixed(1)} s`, "o");
+  mapProgress("ruas no Stick ✓", 1);
+}
+
+function updateMapInfo() {
+  if (!mapOn) return;
+  const why = !chr ? "conecte o Stick" : ride.lat == null ? "inicie o GPS" : null;
+  if (why && !mapBusy) { mapProgress("esperando: " + why, 0); return; }
+  if (mapCenter && ride.lat != null && !mapBusy) {
+    const d = haversine(mapCenter[0], mapCenter[1], ride.lat, ride.lon);
+    $("mapInfo").textContent = `Centro do mapa a ${fmtDist(d)} de você. Baixa de novo ao passar de ${MAP_REFRESH} m.`;
+  }
+  if (!mapBusy && mapNextTry > Date.now()) mapProgress(`nova tentativa em ${Math.ceil((mapNextTry - Date.now()) / 1000)} s`, 0);
+}
+
+async function maybeUpdateMap(force = false) {
+  updateMapInfo();
+  if (!mapOn || mapBusy || !chr || ride.lat == null) return;
+  if (!force && Date.now() < mapNextTry) return;
+  if (!force && mapCenter && haversine(mapCenter[0], mapCenter[1], ride.lat, ride.lon) < MAP_REFRESH) return;
+  mapBusy = true;
+  const lat = ride.lat, lon = ride.lon;
+  try {
+    const els = await fetchRoads(lat, lon);
+    mapProgress("preparando ruas", null);
+    await new Promise(r => setTimeout(r, 30));  // deixa a tela atualizar
+    const m = buildMap(lat, lon, els);
+    mapLog(`${m.nWays} trechos, ${m.pts} pontos → ${m.packets.length} pacotes (${kb(m.packets.reduce((a, p) => a + p.byteLength, 0))})`);
+    mapPackets = m.packets; mapCenter = [lat, lon]; mapNextTry = 0;
+    await sendMap();
+  } catch (e) {
+    mapNextTry = Date.now() + RETRY_DELAY;
+    mapProgress("falhou: " + e.message, 0);
+  } finally { mapBusy = false; updateMapInfo(); }
+}
+setInterval(maybeUpdateMap, 1000);
+
+// ---------- GPX ----------
+function simplify(pts, tol) {  // Douglas-Peucker em metros
+  const k = Math.cos(pts[0][0] * Math.PI / 180) * 111320, P = pts.map(([la, lo]) => [lo * k, la * 110540]);
+  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [i, j] = stack.pop(); let best = -1, bi = -1;
+    const [ax, ay] = P[i], [bx, by] = P[j], dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1;
+    for (let m = i + 1; m < j; m++) { const dd = Math.abs(dy * (P[m][0] - ax) - dx * (P[m][1] - ay)) / L; if (dd > best) { best = dd; bi = m; } }
+    if (best > tol) { keep[bi] = 1; stack.push([i, bi], [bi, j]); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+function loadGpx(text, name) {
+  clearNav();
+  const xml = new DOMParser().parseFromString(text, "application/xml");
+  let nodes = [...xml.getElementsByTagName("trkpt")];
+  if (!nodes.length) nodes = [...xml.getElementsByTagName("rtept")];
+  let pts = nodes.map(n => [parseFloat(n.getAttribute("lat")), parseFloat(n.getAttribute("lon"))]).filter(p => isFinite(p[0]) && isFinite(p[1]));
+  if (pts.length < 2) { $("routeInfo").innerHTML = '<span class="err">Não achei pontos de trilha nesse arquivo.</span>'; return; }
+  const orig = pts.length;
+  for (let tol = 2; pts.length > MAX_POINTS; tol *= 1.5) pts = simplify(pts, tol);
+  let len = 0; for (let i = 1; i < pts.length; i++) len += haversine(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+  route = { name, points: pts };
+  $("routeName").textContent = `${name} · ${fmtDist(len)}`;
+  $("routeInfo").textContent = `${orig} pontos no arquivo, ${pts.length} usados.`;
+  try { localStorage.setItem("bikenav.route", JSON.stringify(route)); } catch {}
+  drawPreview();
+  if (chr) sendRoute();
+}
+
+$("connectBtn").onclick = connect;
+$("mapBtn").onclick = () => {
+  mapOn = !mapOn;
+  $("mapBtn").textContent = mapOn ? "Ruas: ligado" : "Ruas: desligado";
+  if (!mapOn) mapProgress("desligado: o Stick mantém o último mapa", 0);
+};
+$("mapNowBtn").onclick = () => {
+  if (mapBusy) { mapLog("já estou baixando, aguarde"); return; }
+  mapNextTry = 0;
+  if (!chr || ride.lat == null) { mapLog(!chr ? "conecte o Stick primeiro" : "inicie o GPS primeiro", "e"); return; }
+  maybeUpdateMap(true);
+};
+$("gpsBtn").onclick = startGps;
+$("resetBtn").onclick = () => { ride.dist = 0; ride.moving = 0; ride.last = null; render(); };
+$("searchForm").onsubmit = e => { e.preventDefault(); const q = $("searchInput").value.trim(); if (q) search(q); };
+$("favSave").onclick = () => {
+  if (!dest) { $("routeName").textContent = "escolha um destino primeiro"; return; }
+  const icon = +$("favIcon").value;
+  const name = icon === 1 ? "Casa" : icon === 2 ? "Trabalho" : dest.name;
+  if (icon) favs = favs.filter(f => f.icon !== icon);  // so uma Casa e um Trabalho
+  favs.push({ name, lat: dest.lat, lon: dest.lon, icon });
+  saveFavs();
+};
+renderFavs();
+$("clearBtn").onclick = () => {
+  clearNav();
+  route = null; dest = null; if (destPin) { destPin.remove(); destPin = null; }
+  $("routeName").textContent = "nenhuma rota"; drawPreview();
+  try { localStorage.removeItem("bikenav.route"); } catch {}
+  send(new Uint8Array([88]).buffer); // 'X'
+};
+$("gpxFile").onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  f.text().then(t => loadGpx(t, f.name.replace(/\.gpx$/i, "")));
+};
+try {
+  const saved = JSON.parse(localStorage.getItem("bikenav.route"));
+  if (saved?.points?.length > 1) { route = saved; $("routeName").textContent = saved.name; $("routeInfo").textContent = `${saved.points.length} pontos (rota salva).`; drawPreview(); }
+} catch {}
+</script>
+</body>
+</html>
