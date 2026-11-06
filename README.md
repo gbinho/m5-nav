@@ -1,7 +1,8 @@
 # M5 Nav
 
 Painel de rota GPS para bike com o **M5StickC Plus**. O celular usa o GPS e manda posição, rota e mapa de ruas por **Bluetooth (BLE)**; o Stick no guidão mostra a trilha, a velocidade e a distância.
-<img width="758" height="139" alt="image" src="https://github.com/user-attachments/assets/2530282e-3eff-4997-8894-f08c762a24d9" />
+<img width="960" height="1280" alt="5d5c103f-f502-41f2-b770-802d7ccee03b" src="https://github.com/user-attachments/assets/d405c301-06dd-4bf8-a872-609b46faf67d" />
+
 
 <img src="docs/screenshot.png" alt="Página do BikeNav no celular" width="320">
 
